@@ -71,7 +71,9 @@ def load_and_prepare_data(base_path):
 
     melted_df = melted_df[melted_df['Registrations'] > 0]
     melted_df['Date'] = pd.to_datetime(melted_df[['year', 'month']].assign(day=1))
+    melted_df['QuarterValue'] = melted_df['Date'].dt.quarter
     melted_df['Quarter'] = melted_df['Date'].dt.to_period('Q')
+
 
     return melted_df
 
@@ -87,18 +89,30 @@ else:
     # --- Sidebar Filters ---
     st.sidebar.header("Dashboard Filters")
 
-    month_list = ["All Months"] + list(calendar.month_name)[1:]
-    selected_month_name = st.sidebar.selectbox("Select Month", month_list)
+    analysis_type = st.sidebar.radio(
+        "Select Analysis Granularity",
+        ["Overall Trend", "Quarterly", "Monthly"]
+    )
 
-    selected_month_number = 0
-    if selected_month_name != "All Months":
-        selected_month_number = month_list.index(selected_month_name)
-
-    all_years = sorted(data['year'].unique(), reverse=True)
-    if selected_month_name != "All Months":
+    if analysis_type == "Monthly":
+        month_list = list(calendar.month_name)[1:]
+        selected_month_name = st.sidebar.selectbox("Select Month", month_list)
+        selected_month_number = month_list.index(selected_month_name) + 1
+        
+        all_years = sorted(data['year'].unique(), reverse=True)
         selected_year = st.sidebar.selectbox("Select Year", all_years)
         selected_years = (selected_year, selected_year)
-    else:
+
+    elif analysis_type == "Quarterly":
+        quarter_list = ["Q1", "Q2", "Q3", "Q4"]
+        selected_quarter_name = st.sidebar.selectbox("Select Quarter", quarter_list)
+        selected_quarter_number = quarter_list.index(selected_quarter_name) + 1
+
+        all_years = sorted(data['year'].unique(), reverse=True)
+        selected_year = st.sidebar.selectbox("Select Year", all_years)
+        selected_years = (selected_year, selected_year)
+
+    else: # Overall Trend
         min_year, max_year = int(data['year'].min()), int(data['year'].max())
         if min_year == max_year:
             st.sidebar.write(f"Data available for year: **{min_year}**")
@@ -119,7 +133,6 @@ else:
     )
 
     manufacturers = sorted(data['Maker'].unique())
-    # --- UPDATE: Set default manufacturers to the top 10 ---
     top_manufacturers = data.groupby('Maker')['Registrations'].sum().nlargest(10).index.tolist()
     
     selected_manufacturers = st.sidebar.multiselect(
@@ -135,34 +148,32 @@ else:
         (data['Vehicle Category'].isin(selected_categories)) &
         (data['Maker'].isin(selected_manufacturers))
     ]
-    if selected_month_number > 0:
+    
+    if analysis_type == "Monthly":
         filtered_data = filtered_data[filtered_data['month'] == selected_month_number]
+    elif analysis_type == "Quarterly":
+        filtered_data = filtered_data[filtered_data['QuarterValue'] == selected_quarter_number]
 
 
     if filtered_data.empty:
         st.warning("No data available for the selected filters.")
     else:
         # --- Metrics Calculation ---
-        if selected_month_name != "All Months":
+        if analysis_type == "Monthly":
             st.subheader(f"Key Metrics for {selected_month_name} {selected_years[0]}")
             
-            current_month_data = filtered_data
-            current_registrations = current_month_data['Registrations'].sum()
+            current_registrations = filtered_data['Registrations'].sum()
 
             prev_month_date = pd.to_datetime(f"{selected_years[0]}-{selected_month_number}-01") - pd.DateOffset(months=1)
             prev_month_data = data[
-                (data['year'] == prev_month_date.year) & 
-                (data['month'] == prev_month_date.month) &
-                (data['Vehicle Category'].isin(selected_categories)) &
-                (data['Maker'].isin(selected_manufacturers))
+                (data['year'] == prev_month_date.year) & (data['month'] == prev_month_date.month) &
+                (data['Vehicle Category'].isin(selected_categories)) & (data['Maker'].isin(selected_manufacturers))
             ]
             prev_month_registrations = prev_month_data['Registrations'].sum()
 
             prev_year_data = data[
-                (data['year'] == selected_years[0] - 1) & 
-                (data['month'] == selected_month_number) &
-                (data['Vehicle Category'].isin(selected_categories)) &
-                (data['Maker'].isin(selected_manufacturers))
+                (data['year'] == selected_years[0] - 1) & (data['month'] == selected_month_number) &
+                (data['Vehicle Category'].isin(selected_categories)) & (data['Maker'].isin(selected_manufacturers))
             ]
             prev_year_registrations = prev_year_data['Registrations'].sum()
 
@@ -174,20 +185,26 @@ else:
             col2.metric("MoM Growth", f"{mom_growth:.2f}%", delta=f"{mom_growth:.2f}%")
             col3.metric("YoY Growth", f"{yoy_growth:.2f}%", delta=f"{yoy_growth:.2f}%")
 
-        else:
-            latest_quarter_period = filtered_data['Quarter'].max()
-            st.subheader(f"Key Metrics for {str(latest_quarter_period)}")
+        elif analysis_type == "Quarterly":
+            st.subheader(f"Key Metrics for {selected_quarter_name} {selected_years[0]}")
+            
+            current_registrations = filtered_data['Registrations'].sum()
 
-            latest_quarter_df = filtered_data[filtered_data['Quarter'] == latest_quarter_period]
-            current_registrations = latest_quarter_df['Registrations'].sum()
+            current_quarter_period = pd.Period(f"{selected_years[0]}Q{selected_quarter_number}", freq='Q')
+            
+            prev_quarter_period = current_quarter_period - 1
+            prev_quarter_data = data[
+                (data['Quarter'] == prev_quarter_period) &
+                (data['Vehicle Category'].isin(selected_categories)) & (data['Maker'].isin(selected_manufacturers))
+            ]
+            prev_quarter_registrations = prev_quarter_data['Registrations'].sum()
 
-            prev_quarter_period = latest_quarter_period - 1
-            prev_quarter_df = filtered_data[filtered_data['Quarter'] == prev_quarter_period]
-            prev_quarter_registrations = prev_quarter_df['Registrations'].sum()
-
-            prev_year_quarter_period = latest_quarter_period - 4
-            prev_year_quarter_df = filtered_data[filtered_data['Quarter'] == prev_year_quarter_period]
-            prev_year_quarter_registrations = prev_year_quarter_df['Registrations'].sum()
+            prev_year_quarter_period = current_quarter_period - 4
+            prev_year_quarter_data = data[
+                (data['Quarter'] == prev_year_quarter_period) &
+                (data['Vehicle Category'].isin(selected_categories)) & (data['Maker'].isin(selected_manufacturers))
+            ]
+            prev_year_quarter_registrations = prev_year_quarter_data['Registrations'].sum()
 
             qoq_growth = ((current_registrations - prev_quarter_registrations) / prev_quarter_registrations) * 100 if prev_quarter_registrations else 0
             yoy_growth = ((current_registrations - prev_year_quarter_registrations) / prev_year_quarter_registrations) * 100 if prev_year_quarter_registrations else 0
@@ -197,17 +214,50 @@ else:
             col2.metric("QoQ Growth", f"{qoq_growth:.2f}%", delta=f"{qoq_growth:.2f}%")
             col3.metric("YoY Growth", f"{yoy_growth:.2f}%", delta=f"{yoy_growth:.2f}%")
 
+        else: # Overall Trend
+            # --- UPDATE: Changed Title and Total Registrations Logic ---
+            if selected_years[0] == selected_years[1]:
+                st.subheader(f"Key Metrics for {selected_years[0]}")
+            else:
+                st.subheader(f"Key Metrics for {selected_years[0]} - {selected_years[1]}")
+            st.caption("QoQ and YoY growth are calculated for the most recent quarter in the selected range.")
+
+            # Total registrations for the entire selected period
+            total_registrations_for_range = filtered_data['Registrations'].sum()
+
+            # --- Calculations for recent quarter trends ---
+            latest_quarter_period = filtered_data['Quarter'].max()
+            latest_quarter_df = filtered_data[filtered_data['Quarter'] == latest_quarter_period]
+            current_quarter_registrations = latest_quarter_df['Registrations'].sum()
+
+            prev_quarter_period = latest_quarter_period - 1
+            prev_quarter_df = filtered_data[filtered_data['Quarter'] == prev_quarter_period]
+            prev_quarter_registrations = prev_quarter_df['Registrations'].sum()
+
+            prev_year_quarter_period = latest_quarter_period - 4
+            prev_year_quarter_df = filtered_data[filtered_data['Quarter'] == prev_year_quarter_period]
+            prev_year_quarter_registrations = prev_year_quarter_df['Registrations'].sum()
+
+            qoq_growth = ((current_quarter_registrations - prev_quarter_registrations) / prev_quarter_registrations) * 100 if prev_quarter_registrations else 0
+            yoy_growth = ((current_quarter_registrations - prev_year_quarter_registrations) / prev_year_quarter_registrations) * 100 if prev_year_quarter_registrations else 0
+
+            col1, col2, col3 = st.columns(3)
+            # Display total for the range, but growth for the latest quarter
+            col1.metric("Total Registrations", f"{total_registrations_for_range:,.0f}")
+            col2.metric(f"QoQ Growth ({str(latest_quarter_period)})", f"{qoq_growth:.2f}%", delta=f"{qoq_growth:.2f}%")
+            col3.metric(f"YoY Growth ({str(latest_quarter_period)})", f"{yoy_growth:.2f}%", delta=f"{yoy_growth:.2f}%")
+
         st.markdown("---")
 
         # --- Visualizations ---
-        st.subheader("Monthly Registration Trends")
+        st.subheader("Registration Trends")
         monthly_trends = filtered_data.groupby('Date')['Registrations'].sum().reset_index()
         fig_trends = px.bar(
             monthly_trends,
             x='Date',
             y='Registrations',
-            title='Total Vehicle Registrations Over Time',
-            labels={'Registrations': 'Number of Registrations'}
+            title='Total Vehicle Registrations',
+            labels={'Registrations': 'Number of Registrations', 'Date': 'Month'}
         )
         fig_trends.update_layout(title_x=0.5)
         st.plotly_chart(fig_trends, use_container_width=True)
@@ -222,7 +272,7 @@ else:
                 manufacturer_share.nlargest(10, 'Registrations'),
                 names='Maker',
                 values='Registrations',
-                title=f'Top 10 Manufacturers by Registrations'
+                title=f'Top 10 Manufacturers'
             )
             fig_share.update_layout(title_x=0.5)
             st.plotly_chart(fig_share, use_container_width=True)

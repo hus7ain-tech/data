@@ -72,7 +72,7 @@ def load_and_prepare_data(base_path):
     melted_df = melted_df[melted_df['Registrations'] > 0]
     melted_df['Date'] = pd.to_datetime(melted_df[['year', 'month']].assign(day=1))
     melted_df['QuarterValue'] = melted_df['Date'].dt.quarter
-    melted_df['Quarter'] = "Q" + melted_df['Date'].dt.quarter.astype(str)
+    melted_df['Quarter'] = melted_df['Date'].dt.to_period('Q')
 
 
     return melted_df
@@ -111,6 +111,10 @@ else:
         selected_years = (selected_year, selected_year)
 
     elif analysis_type == "Quarterly":
+        quarter_list = ["Q1", "Q2", "Q3", "Q4"]
+        selected_quarter_name = st.sidebar.selectbox("Select Quarter", quarter_list)
+        selected_quarter_number = quarter_list.index(selected_quarter_name) + 1
+
         all_years = sorted(data['year'].unique(), reverse=True)
         selected_year = st.sidebar.selectbox("Select Year", all_years)
         selected_years = (selected_year, selected_year)
@@ -154,7 +158,10 @@ else:
     
     if analysis_type == "Monthly":
         filtered_data = filtered_data[filtered_data['month'] == selected_month_number]
-    
+    elif analysis_type == "Quarterly":
+        filtered_data = filtered_data[filtered_data['QuarterValue'] == selected_quarter_number]
+
+
     if filtered_data.empty:
         st.warning("No data available for the selected filters.")
     else:
@@ -186,23 +193,33 @@ else:
             col3.metric("YoY Growth", f"{yoy_growth:.2f}%", delta=f"{yoy_growth:.2f}%")
 
         elif analysis_type == "Quarterly":
-            st.subheader(f"Quarterly Breakdown for {selected_years[0]}")
+            st.subheader(f"Key Metrics for {selected_quarter_name} {selected_years[0]}")
             
-            quarterly_summary = filtered_data.groupby('Quarter')['Registrations'].sum()
-            
-            total_registrations = quarterly_summary.sum()
-            best_quarter = quarterly_summary.idxmax() if not quarterly_summary.empty else "N/A"
-            
-            q1_regs = quarterly_summary.get('Q1', 0)
-            q4_regs = quarterly_summary.get('Q4', 0)
-            
-            intra_year_growth = ((q4_regs - q1_regs) / q1_regs) * 100 if q1_regs else 0
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Registrations (Year)", f"{total_registrations:,.0f}")
-            col2.metric("Best Quarter", best_quarter)
-            col3.metric("Q1 to Q4 Growth", f"{intra_year_growth:.2f}%", delta=f"{intra_year_growth:.2f}%")
+            current_registrations = filtered_data['Registrations'].sum()
 
+            current_quarter_period = pd.Period(f"{selected_years[0]}Q{selected_quarter_number}", freq='Q')
+            
+            prev_quarter_period = current_quarter_period - 1
+            prev_quarter_data = data[
+                (data['Quarter'] == prev_quarter_period) &
+                (data['Vehicle Category'].isin(selected_categories)) & (data['Maker'].isin(selected_manufacturers))
+            ]
+            prev_quarter_registrations = prev_quarter_data['Registrations'].sum()
+
+            prev_year_quarter_period = current_quarter_period - 4
+            prev_year_quarter_data = data[
+                (data['Quarter'] == prev_year_quarter_period) &
+                (data['Vehicle Category'].isin(selected_categories)) & (data['Maker'].isin(selected_manufacturers))
+            ]
+            prev_year_quarter_registrations = prev_year_quarter_data['Registrations'].sum()
+
+            qoq_growth = ((current_registrations - prev_quarter_registrations) / prev_quarter_registrations) * 100 if prev_quarter_registrations else 0
+            yoy_growth = ((current_registrations - prev_year_quarter_registrations) / prev_year_quarter_registrations) * 100 if prev_year_quarter_registrations else 0
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Registrations", f"{current_registrations:,.0f}")
+            col2.metric("QoQ Growth", f"{qoq_growth:.2f}%", delta=f"{qoq_growth:.2f}%")
+            col3.metric("YoY Growth", f"{yoy_growth:.2f}%", delta=f"{yoy_growth:.2f}%")
 
         else: # Overall Trend
             if selected_years[0] == selected_years[1]:
@@ -213,16 +230,16 @@ else:
 
             total_registrations_for_range = filtered_data['Registrations'].sum()
 
-            latest_quarter_period = pd.Period(filtered_data['Date'].max(), freq='Q')
-            latest_quarter_df = filtered_data[pd.to_datetime(filtered_data['Date']).dt.to_period('Q') == latest_quarter_period]
+            latest_quarter_period = filtered_data['Quarter'].max()
+            latest_quarter_df = filtered_data[filtered_data['Quarter'] == latest_quarter_period]
             current_quarter_registrations = latest_quarter_df['Registrations'].sum()
 
             prev_quarter_period = latest_quarter_period - 1
-            prev_quarter_df = filtered_data[pd.to_datetime(filtered_data['Date']).dt.to_period('Q') == prev_quarter_period]
+            prev_quarter_df = filtered_data[filtered_data['Quarter'] == prev_quarter_period]
             prev_quarter_registrations = prev_quarter_df['Registrations'].sum()
 
             prev_year_quarter_period = latest_quarter_period - 4
-            prev_year_quarter_df = filtered_data[pd.to_datetime(filtered_data['Date']).dt.to_period('Q') == prev_year_quarter_period]
+            prev_year_quarter_df = filtered_data[filtered_data['Quarter'] == prev_year_quarter_period]
             prev_year_quarter_registrations = prev_year_quarter_df['Registrations'].sum()
 
             qoq_growth = ((current_quarter_registrations - prev_quarter_registrations) / prev_quarter_registrations) * 100 if prev_quarter_registrations else 0
@@ -233,10 +250,9 @@ else:
             col2.metric(f"QoQ Growth ({str(latest_quarter_period)})", f"{qoq_growth:.2f}%", delta=f"{qoq_growth:.2f}%")
             col3.metric(f"YoY Growth ({str(latest_quarter_period)})", f"{yoy_growth:.2f}%", delta=f"{yoy_growth:.2f}%")
 
-        # --- Download Button ---
+        # --- NEW FEATURE: Download Button ---
         st.sidebar.markdown("---")
-        df_for_download = filtered_data.drop(columns=['Date', 'QuarterValue'], errors='ignore')
-        csv = convert_df_to_csv(df_for_download)
+        csv = convert_df_to_csv(filtered_data)
         st.sidebar.download_button(
            label="Download Data as CSV",
            data=csv,
@@ -247,27 +263,15 @@ else:
         st.markdown("---")
 
         # --- Visualizations ---
-        if analysis_type == "Quarterly":
-            st.subheader(f"Registrations per Quarter for {selected_years[0]}")
-            quarterly_trends = filtered_data.groupby('Quarter')['Registrations'].sum().reset_index()
-            fig_trends = px.bar(
-                quarterly_trends,
-                x='Quarter',
-                y='Registrations',
-                title=f'Quarterly Registrations for {selected_years[0]}',
-                labels={'Registrations': 'Number of Registrations', 'Quarter': 'Quarter'}
-            )
-        else:
-            st.subheader("Registration Trends")
-            monthly_trends = filtered_data.groupby('Date')['Registrations'].sum().reset_index()
-            fig_trends = px.bar(
-                monthly_trends,
-                x='Date',
-                y='Registrations',
-                title='Total Vehicle Registrations',
-                labels={'Registrations': 'Number of Registrations', 'Date': 'Month'}
-            )
-        
+        st.subheader("Registration Trends")
+        monthly_trends = filtered_data.groupby('Date')['Registrations'].sum().reset_index()
+        fig_trends = px.bar(
+            monthly_trends,
+            x='Date',
+            y='Registrations',
+            title='Total Vehicle Registrations',
+            labels={'Registrations': 'Number of Registrations', 'Date': 'Month'}
+        )
         fig_trends.update_layout(title_x=0.5)
         st.plotly_chart(fig_trends, use_container_width=True)
 
@@ -313,102 +317,21 @@ else:
                 category_leader_data = filtered_data[filtered_data['Vehicle Category'] == leader_category]
 
                 if not category_leader_data.empty:
-                    leader_board = category_leader_data.groupby('Maker')['Registrations'].sum().sort_values(ascending=False).reset_index()
+                    leader_board = category_leader_data.groupby('Maker')['Registrations'].sum().nlargest(1)
                     
                     if not leader_board.empty:
-                        st.markdown(f"#### Manufacturer Rankings for {leader_category}")
-                        fig_leaderboard = px.bar(
-                            leader_board,
-                            x='Registrations',
-                            y='Maker',
-                            orientation='h',
-                            title=f'Rankings in {leader_category}',
-                            labels={'Registrations': 'Total Registrations', 'Maker': 'Manufacturer'}
-                        )
-                        fig_leaderboard.update_layout(
-                            yaxis={'categoryorder':'total ascending'},
-                            title_x=0.5
-                        )
-                        st.plotly_chart(fig_leaderboard, use_container_width=True)
+                        leader_name = leader_board.index[0]
+                        leader_sales = leader_board.values[0]
 
+                        st.metric(
+                            label=f"Leader in {leader_category}",
+                            value=leader_name,
+                            delta=f"{leader_sales:,.0f} Registrations"
+                        )
                     else:
                         st.info(f"No registration data for the selected manufacturers in the {leader_category} category.")
                 else:
                     st.info(f"No data available for the {leader_category} category with the current filters.")
         else:
             st.warning("Please select at least one vehicle category to see the leader.")
-
-        # --- NEW FEATURE: Quarterly YoY Growth Comparison ---
-        st.markdown("---")
-        st.subheader("Quarterly Growth Comparison (YoY)")
-
-        q_col1, q_col2 = st.columns(2)
-        with q_col1:
-            # Use years that have a subsequent year in the data for comparison
-            available_years_for_yoy = [y for y in data['year'].unique() if y + 1 in data['year'].unique()]
-            if available_years_for_yoy:
-                yoy_year = st.selectbox("Select Year for Comparison", options=sorted(available_years_for_yoy, reverse=True))
-            else:
-                yoy_year = None
-        
-        with q_col2:
-            yoy_quarter = st.selectbox("Select Quarter for Comparison", options=["Q1", "Q2", "Q3", "Q4"])
-
-        yoy_view_type = st.radio(
-            "Show ranking for:",
-            ["Top 5 Growth Companies", "Selected Companies"],
-            horizontal=True
-        )
-
-        if yoy_year:
-            # Filter for the specific quarter in the base year and the next year
-            base_year_data = data[(data['year'] == yoy_year) & (data['Quarter'] == yoy_quarter)]
-            next_year_data = data[(data['year'] == yoy_year + 1) & (data['Quarter'] == yoy_quarter)]
-
-            # Filter by selected vehicle categories
-            base_year_data = base_year_data[base_year_data['Vehicle Category'].isin(selected_categories)]
-            next_year_data = next_year_data[next_year_data['Vehicle Category'].isin(selected_categories)]
-
-            # Group by maker to get total registrations for the quarter
-            base_sales = base_year_data.groupby('Maker')['Registrations'].sum()
-            next_sales = next_year_data.groupby('Maker')['Registrations'].sum()
-
-            # Combine the data
-            growth_df = pd.DataFrame({'BaseSales': base_sales, 'NextSales': next_sales}).fillna(0)
-            
-            # Calculate YoY Growth, handle division by zero
-            growth_df['YoY_Growth_%'] = (growth_df['NextSales'] - growth_df['BaseSales']) / growth_df['BaseSales'] * 100
-            growth_df.replace([float('inf'), -float('inf')], 0, inplace=True) # Replace infinite values from division by zero
-            growth_df.dropna(subset=['YoY_Growth_%'], inplace=True)
-
-
-            if yoy_view_type == "Top 5 Growth Companies":
-                # We show the top 5 growers from all companies
-                final_df = growth_df.sort_values(by='YoY_Growth_%', ascending=False).head(5).reset_index()
-                chart_title = f"Top 5 Fastest Growing Companies: {yoy_quarter} {yoy_year} vs {yoy_year + 1}"
-            else:
-                # We show the growth for the companies selected in the main sidebar filter
-                final_df = growth_df[growth_df.index.isin(selected_manufacturers)].sort_values(by='YoY_Growth_%', ascending=False).reset_index()
-                chart_title = f"Growth for Selected Companies: {yoy_quarter} {yoy_year} vs {yoy_year + 1}"
-
-            if not final_df.empty:
-                fig_yoy_growth = px.bar(
-                    final_df,
-                    x='YoY_Growth_%',
-                    y='Maker',
-                    orientation='h',
-                    title=chart_title,
-                    labels={'YoY_Growth_%': 'YoY Growth (%)', 'Maker': 'Manufacturer'},
-                    text='YoY_Growth_%'
-                )
-                fig_yoy_growth.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
-                fig_yoy_growth.update_layout(
-                    yaxis={'categoryorder':'total ascending'},
-                    title_x=0.5
-                )
-                st.plotly_chart(fig_yoy_growth, use_container_width=True)
-            else:
-                st.info("No data available to compare for the selected criteria.")
-        else:
-            st.warning("Not enough consecutive years of data to perform a YoY quarterly comparison.")
 

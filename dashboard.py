@@ -338,16 +338,16 @@ else:
         else:
             st.warning("Please select at least one vehicle category to see the leader.")
 
-        # --- NEW FEATURE: Quarterly YoY Growth Comparison ---
+        # --- Quarterly YoY Growth Comparison ---
         st.markdown("---")
         st.subheader("Quarterly Growth Comparison (YoY)")
 
         q_col1, q_col2 = st.columns(2)
         with q_col1:
-            # Use years that have a subsequent year in the data for comparison
-            available_years_for_yoy = [y for y in data['year'].unique() if y + 1 in data['year'].unique()]
+            # --- UPDATE: Use years that have a PREVIOUS year in the data ---
+            available_years_for_yoy = [y for y in data['year'].unique() if y - 1 in data['year'].unique()]
             if available_years_for_yoy:
-                yoy_year = st.selectbox("Select Year for Comparison", options=sorted(available_years_for_yoy, reverse=True))
+                yoy_year = st.selectbox("Select Year to Analyze", options=sorted(available_years_for_yoy, reverse=True))
             else:
                 yoy_year = None
         
@@ -361,35 +361,33 @@ else:
         )
 
         if yoy_year:
-            # Filter for the specific quarter in the base year and the next year
-            base_year_data = data[(data['year'] == yoy_year) & (data['Quarter'] == yoy_quarter)]
-            next_year_data = data[(data['year'] == yoy_year + 1) & (data['Quarter'] == yoy_quarter)]
+            # --- UPDATE: Compare current year to PREVIOUS year ---
+            previous_year_data = data[(data['year'] == yoy_year - 1) & (data['Quarter'] == yoy_quarter)]
+            current_year_data = data[(data['year'] == yoy_year) & (data['Quarter'] == yoy_quarter)]
 
             # Filter by selected vehicle categories
-            base_year_data = base_year_data[base_year_data['Vehicle Category'].isin(selected_categories)]
-            next_year_data = next_year_data[next_year_data['Vehicle Category'].isin(selected_categories)]
+            previous_year_data = previous_year_data[previous_year_data['Vehicle Category'].isin(selected_categories)]
+            current_year_data = current_year_data[current_year_data['Vehicle Category'].isin(selected_categories)]
 
             # Group by maker to get total registrations for the quarter
-            base_sales = base_year_data.groupby('Maker')['Registrations'].sum()
-            next_sales = next_year_data.groupby('Maker')['Registrations'].sum()
+            previous_sales = previous_year_data.groupby('Maker')['Registrations'].sum()
+            current_sales = current_year_data.groupby('Maker')['Registrations'].sum()
 
             # Combine the data
-            growth_df = pd.DataFrame({'BaseSales': base_sales, 'NextSales': next_sales}).fillna(0)
+            growth_df = pd.DataFrame({'PreviousSales': previous_sales, 'CurrentSales': current_sales}).fillna(0)
             
             # Calculate YoY Growth, handle division by zero
-            growth_df['YoY_Growth_%'] = (growth_df['NextSales'] - growth_df['BaseSales']) / growth_df['BaseSales'] * 100
+            growth_df['YoY_Growth_%'] = (growth_df['CurrentSales'] - growth_df['PreviousSales']) / growth_df['PreviousSales'] * 100
             growth_df.replace([float('inf'), -float('inf')], 0, inplace=True) # Replace infinite values from division by zero
             growth_df.dropna(subset=['YoY_Growth_%'], inplace=True)
 
 
             if yoy_view_type == "Top 5 Growth Companies":
-                # We show the top 5 growers from all companies
                 final_df = growth_df.sort_values(by='YoY_Growth_%', ascending=False).head(5).reset_index()
-                chart_title = f"Top 5 Fastest Growing Companies: {yoy_quarter} {yoy_year} vs {yoy_year + 1}"
+                chart_title = f"Top 5 Fastest Growing Companies: {yoy_quarter} {yoy_year} vs {yoy_year - 1}"
             else:
-                # We show the growth for the companies selected in the main sidebar filter
                 final_df = growth_df[growth_df.index.isin(selected_manufacturers)].sort_values(by='YoY_Growth_%', ascending=False).reset_index()
-                chart_title = f"Growth for Selected Companies: {yoy_quarter} {yoy_year} vs {yoy_year + 1}"
+                chart_title = f"Growth for Selected Companies: {yoy_quarter} {yoy_year} vs {yoy_year - 1}"
 
             if not final_df.empty:
                 fig_yoy_growth = px.bar(
